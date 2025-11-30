@@ -54,3 +54,5 @@ i_weights = 10000
 use_wandb = True
 wandb_project = nerf-idl
 wandb_run_name = flower_ipe_test
+
+learnable_pe = False

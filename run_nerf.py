@@ -248,7 +248,7 @@ def create_nerf(args):
         network_params += list(model_fine.parameters())
 
     pe_params = []
-    if args.learnable_pe:
+    if args.learnable_pe and not args.use_ipe: 
         if isinstance(embed_fn, nn.Module):
             pe_params += list(embed_fn.parameters())
         if embeddirs_fn is not None and isinstance(embeddirs_fn, nn.Module):
