@@ -182,7 +182,7 @@ class IPEEmbedder(nn.Module):
             num_freqs: Number of frequency bands
             include_input: Whether to include raw input in output
         """
-        super(IPEEEmbedder, self).__init__()
+        super(IPEEmbedder, self).__init__()
         self.input_dims = input_dims
         self.num_freqs = num_freqs
         self.include_input = include_input
