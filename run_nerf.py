@@ -192,12 +192,16 @@ def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
     # Create embedders (position encoding)
-    embed_fn, input_ch = get_embedder(args.multires, args.i_embed, 
-                                       learnable=args.learnable_pe,
-                                       learnable_phase=args.learnable_pe_phase,
-                                       learnable_freqs=getattr(args, 'pe_learnable_freqs', True),
-                                       init_scale=getattr(args, 'pe_init_scale', 1.0),
-                                       use_gating=getattr(args, 'pe_use_gating', False))
+    embed_fn, input_ch = get_embedder(
+        args.multires,
+        args.i_embed,
+        learnable=args.learnable_pe,
+        learnable_phase=args.learnable_pe_phase,
+        learnable_freqs=getattr(args, "pe_learnable_freqs", True),
+        init_scale=getattr(args, "pe_init_scale", 1.0),
+        use_gating=getattr(args, "pe_use_gating", False),
+        use_ipe=getattr(args, "use_ipe", False),
+    )
 
     input_ch_views = 0
     embeddirs_fn = None
@@ -208,24 +212,24 @@ def create_nerf(args):
                                                      learnable_freqs=getattr(args, 'pe_learnable_freqs', True),
                                                      init_scale=getattr(args, 'pe_init_scale', 1.0),
                                                      use_gating=getattr(args, 'pe_use_gating', False))
-    
+
     # Move embedders to device if they are nn.Modules
     if isinstance(embed_fn, nn.Module):
         embed_fn = embed_fn.to(device)
     if embeddirs_fn is not None and isinstance(embeddirs_fn, nn.Module):
         embeddirs_fn = embeddirs_fn.to(device)
-    
+
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
     use_film = getattr(args, 'use_film', True)  # Default to True for FiLM conditioning
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, use_film=use_film).to(device)
-    
+
     # Initialize alpha_linear bias to -1.0 for smoother density field
     if args.use_viewdirs:
         nn.init.constant_(model.alpha_linear.bias, -1.0)
-    
+
     grad_vars = list(model.parameters())
 
     model_fine = None
@@ -242,7 +246,7 @@ def create_nerf(args):
     network_params = list(model.parameters())
     if model_fine is not None:
         network_params += list(model_fine.parameters())
-    
+
     pe_params = []
     if args.learnable_pe:
         if isinstance(embed_fn, nn.Module):
@@ -267,7 +271,7 @@ def create_nerf(args):
         print(f'Using separate learning rates: network={args.lrate}, PE={pe_lrate}')
     else:
         optimizer = torch.optim.Adam(params=network_params + pe_params, lr=args.lrate, betas=(0.9, 0.999))
-    
+
     grad_vars = network_params + pe_params
 
     start = 0
@@ -289,7 +293,7 @@ def create_nerf(args):
         ckpt = torch.load(ckpt_path)
 
         start = ckpt['global_step']
-        
+
         # Try to load optimizer state (may fail if hyperparameters changed)
         try:
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])
@@ -309,7 +313,7 @@ def create_nerf(args):
         model.load_state_dict(ckpt['network_fn_state_dict'])
         if model_fine is not None:
             model_fine.load_state_dict(ckpt['network_fine_state_dict'])
-        
+
         # Load embedder parameters if they exist
         if args.learnable_pe:
             # Try to load embedder parameters from checkpoint
@@ -325,7 +329,7 @@ def create_nerf(args):
                 # Checkpoint was saved with fixed PE, initialize learnable PE with standard frequencies
                 print('Checkpoint was saved with fixed PE. Initializing learnable PE with standard frequencies.')
                 print('The learnable PE will start from the same frequencies as fixed PE and can adapt during training.')
-            
+
             if 'embeddirs_fn_state_dict' in ckpt and isinstance(embeddirs_fn, nn.Module):
                 try:
                     embeddirs_fn.load_state_dict(ckpt['embeddirs_fn_state_dict'], strict=False)
@@ -594,6 +598,9 @@ def config_parser():
                         help='direct parameter update magnitude for frequencies (default: 0.0, try 0.001-0.01 to force exploration)')
     parser.add_argument("--raw_noise_std", type=float, default=0., 
                         help='std dev of noise added to regularize sigma_a output, 1e0 recommended')
+    parser.add_argument(
+        "--use_ipe", action="store_true", help="use Integrated Positional Encoding"
+    )
 
     parser.add_argument("--render_only", action='store_true', 
                         help='do not optimize, reload weights and render out render_poses path')

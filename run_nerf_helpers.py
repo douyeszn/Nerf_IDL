@@ -304,7 +304,7 @@ class NeRF(nn.Module):
         D=8,
         W=256,
         input_ch=3,
-        input_ch_views=3,
+        input_ch_views=3,  
         output_ch=4,
         skips=[4],
         use_viewdirs=False,
