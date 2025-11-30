@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 
 
-#  Misc
+# Misc
 img2mse = lambda x, y: torch.mean((x - y) ** 2)
 mse2psnr = lambda x: -10.0 * torch.log(x) / torch.log(torch.Tensor([10.0]))
 to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
@@ -168,6 +168,73 @@ class LearnableFourierEmbedder(nn.Module):
         return torch.cat(outputs, -1)
 
 
+class IPEEmbedder(nn.Module):
+    def __init__(self, input_dims=3, num_freqs=10, include_input=True):
+        """
+        Integrated Positional Encoding for NeRF
+
+        Instead of encoding points, IPE encodes ray segments by integrating
+        the positional encoding over the interval, which is more appropriate
+        for volume rendering where we're integrating over space.
+
+        Args:
+            input_dims: Input dimension (3 for xyz coordinates)
+            num_freqs: Number of frequency bands
+            include_input: Whether to include raw input in output
+        """
+        super(IPEEEmbedder, self).__init__()
+        self.input_dims = input_dims
+        self.num_freqs = num_freqs
+        self.include_input = include_input
+
+        # Frequency bands (same as original NeRF)
+        freq_bands = 2.0 ** torch.linspace(0.0, num_freqs - 1, steps=num_freqs)
+        self.register_buffer("freq_bands", freq_bands)
+
+        # Calculate output dimension
+        out_dim = 0
+        if include_input:
+            out_dim += input_dims
+        out_dim += num_freqs * input_dims * 2  # *2 for sin and cos
+        self.out_dim = out_dim
+
+    def forward(self, means, covs=None):
+        """
+        Args:
+            means: [..., input_dims] - center of ray segment
+            covs: [..., input_dims] - variance along each dimension (optional)
+                  If None, falls back to standard positional encoding
+        Returns:
+            [..., out_dim] encoded features
+        """
+        outputs = []
+
+        if self.include_input:
+            outputs.append(means)
+
+        if covs is None:
+            # Standard positional encoding (backward compatible)
+            for freq in self.freq_bands:
+                scaled = means * freq
+                outputs.append(torch.sin(scaled))
+                outputs.append(torch.cos(scaled))
+        else:
+            # IPE: integrate encoding over the segment
+            for freq in self.freq_bands:
+                # Scale mean and variance by frequency
+                scaled_mean = means * freq
+                scaled_var = covs * (freq**2)
+
+                # Gaussian damping factor (analytic integration result)
+                # This automatically reduces high-freq contribution for large segments
+                damping = torch.exp(-0.5 * scaled_var)
+
+                outputs.append(damping * torch.sin(scaled_mean))
+                outputs.append(damping * torch.cos(scaled_mean))
+
+        return torch.cat(outputs, -1)
+
+
 def get_embedder(
     multires,
     i=0,
@@ -176,6 +243,7 @@ def get_embedder(
     learnable_freqs=True,
     init_scale=1.0,
     use_gating=False,
+    use_ipe=False,
 ):
     """
     Get embedder function for positional encoding
@@ -188,6 +256,7 @@ def get_embedder(
         learnable_freqs: Make frequency bands learnable (only if learnable=True)
         init_scale: Initial scale for frequency initialization (only if learnable=True)
         use_gating: Use per-frequency amplitude gates (only if learnable=True)
+        use_ipe: Use Integrated Positional Encoding (mutually exclusive with learnable)
 
     Returns:
         embed: Embedding function or module
@@ -196,7 +265,11 @@ def get_embedder(
     if i == -1:
         return nn.Identity(), 3
 
-    if learnable:
+    if use_ipe:
+        # Use Integrated Positional Encoding
+        embedder_obj = IPEEmbedder(input_dims=3, num_freqs=multires, include_input=True)
+        return embedder_obj, embedder_obj.out_dim
+    elif learnable:
         # Use learnable Fourier feature encoding
         embedder_obj = LearnableFourierEmbedder(
             input_dims=3,
